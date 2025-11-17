@@ -34,6 +34,13 @@
             <artifactId>kafka-avro-serializer</artifactId>
             <version>8.1.0</version>
         </dependency>
+        
+        <!-- Explicitly include kafka-schema-serializer to ensure AbstractKafkaSchemaSerDe is available -->
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>kafka-schema-serializer</artifactId>
+            <version>8.1.0</version>
+        </dependency>
     </dependencies>
 
     <repositories>
