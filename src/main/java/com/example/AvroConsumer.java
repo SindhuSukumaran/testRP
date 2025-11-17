@@ -89,20 +89,52 @@ public class AvroConsumer {
             System.out.println("Subscribing to topic: " + topicName);
             consumer.subscribe(Collections.singletonList(topicName));
             
-            // Wait for partition assignment
+            // Wait for partition assignment with retry logic
             System.out.println("Waiting for partition assignment...");
-            consumer.poll(Duration.ofSeconds(5));
+            List<TopicPartition> partitions = Collections.emptyList();
+            int maxRetries = 10;
+            int retryCount = 0;
             
-            // Get assigned partitions
-            List<TopicPartition> partitions = consumer.assignment().stream()
-                .collect(Collectors.toList());
+            while (partitions.isEmpty() && retryCount < maxRetries) {
+                System.out.println("Poll attempt " + (retryCount + 1) + "/" + maxRetries + "...");
+                ConsumerRecords<String, Object> records = consumer.poll(Duration.ofSeconds(5));
+                
+                partitions = consumer.assignment().stream()
+                    .collect(Collectors.toList());
+                
+                if (partitions.isEmpty()) {
+                    retryCount++;
+                    if (retryCount < maxRetries) {
+                        System.out.println("No partitions assigned yet, retrying...");
+                        try {
+                            Thread.sleep(1000); // Wait 1 second before retry
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                }
+            }
             
             if (partitions.isEmpty()) {
-                System.out.println("No partitions assigned. Exiting.");
+                System.out.println("==========================================");
+                System.out.println("ERROR: No partitions assigned after " + maxRetries + " attempts");
+                System.out.println("==========================================");
+                System.out.println("Possible causes:");
+                System.out.println("  1. Topic '" + topicName + "' does not exist");
+                System.out.println("  2. Cannot connect to cluster (check bootstrap servers)");
+                System.out.println("  3. Authentication/authorization failure");
+                System.out.println("  4. Consumer group coordinator unavailable");
+                System.out.println("\nTroubleshooting:");
+                System.out.println("  - Verify topic exists: Check if topic '" + topicName + "' exists in the cluster");
+                System.out.println("  - Check connection: Verify bootstrap servers are reachable");
+                System.out.println("  - Check credentials: Verify username/password are correct");
+                System.out.println("  - Check permissions: Verify user has READ permission for the topic");
+                System.out.println("==========================================");
                 return;
             }
             
-            System.out.println("Assigned partitions: " + partitions);
+            System.out.println("Successfully assigned partitions: " + partitions);
             
             // Seek to end to get the latest offsets
             System.out.println("Seeking to end of partitions...");
