@@ -1,7 +1,6 @@
 package com.example;
 
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
-import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -9,6 +8,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
@@ -17,23 +17,38 @@ import java.util.stream.Collectors;
 
 /**
  * Simple Redpanda Avro consumer that consumes the last N messages from a topic.
+ * Configuration is loaded from consumer.properties file.
  */
 public class AvroConsumer {
-    // Static configuration variables
-    private static final String BOOTSTRAP_SERVERS = "127.0.0.1:19092,127.0.0.1:29092,127.0.0.1:39092";
-    private static final String TOPIC_NAME = "test-topic";
-    private static final String USERNAME = "superuser";
-    private static final String PASSWORD = "secretpassword";
-    private static final String AVRO_SCHEMA_REGISTRY_URL = "http://localhost:8081";
-    private static final String TRUSTSTORE_PATH = null; // e.g., "/path/to/truststore.jks"
-    private static final String TRUSTSTORE_PASSWORD = null; // e.g., "truststore-password"
-    private static final String SECURITY_PROTOCOL = "SASL_SSL";
-    private static final String SASL_MECHANISM = "SCRAM-SHA-512";
-    private static final String SASL_JAAS_CONFIG = 
-        String.format("org.apache.kafka.common.security.scram.ScramLoginModule required username=\"%s\" password=\"%s\";",
-            USERNAME, PASSWORD);
+    private static Properties config;
+    
+    /**
+     * Loads configuration from consumer.properties file.
+     */
+    private static Properties loadConfiguration() {
+        Properties props = new Properties();
+        try {
+            InputStream inputStream = AvroConsumer.class.getClassLoader()
+                .getResourceAsStream("consumer.properties");
+            
+            if (inputStream == null) {
+                throw new RuntimeException("Configuration file 'consumer.properties' not found in classpath");
+            }
+            
+            props.load(inputStream);
+            inputStream.close();
+            
+            System.out.println("Configuration loaded from consumer.properties");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load configuration from consumer.properties: " + e.getMessage(), e);
+        }
+        return props;
+    }
     
     public static void main(String[] args) {
+        // Load configuration from properties file
+        config = loadConfiguration();
+        
         // Get number of messages to consume from command line argument
         int numMessages = 10; // default
         if (args.length > 0) {
@@ -44,14 +59,21 @@ public class AvroConsumer {
             }
         }
         
+        // Get configuration values
+        String bootstrapServers = config.getProperty("bootstrap.servers");
+        String topicName = config.getProperty("topic.name");
+        String schemaRegistryUrl = config.getProperty("schema.registry.url");
+        String securityProtocol = config.getProperty("security.protocol");
+        String saslMechanism = config.getProperty("sasl.mechanism");
+        
         System.out.println("==========================================");
         System.out.println("Redpanda Avro Consumer");
         System.out.println("==========================================");
-        System.out.println("Bootstrap servers: " + BOOTSTRAP_SERVERS);
-        System.out.println("Topic: " + TOPIC_NAME);
-        System.out.println("Schema Registry URL: " + AVRO_SCHEMA_REGISTRY_URL);
-        System.out.println("Security protocol: " + SECURITY_PROTOCOL);
-        System.out.println("SASL mechanism: " + SASL_MECHANISM);
+        System.out.println("Bootstrap servers: " + bootstrapServers);
+        System.out.println("Topic: " + topicName);
+        System.out.println("Schema Registry URL: " + schemaRegistryUrl);
+        System.out.println("Security protocol: " + securityProtocol);
+        System.out.println("SASL mechanism: " + saslMechanism);
         System.out.println("Number of messages to consume: " + numMessages);
         System.out.println("==========================================\n");
         
@@ -64,8 +86,8 @@ public class AvroConsumer {
             System.out.println("Creating KafkaConsumer with Avro deserializer...");
             consumer = new KafkaConsumer<>(props);
             
-            System.out.println("Subscribing to topic: " + TOPIC_NAME);
-            consumer.subscribe(Collections.singletonList(TOPIC_NAME));
+            System.out.println("Subscribing to topic: " + topicName);
+            consumer.subscribe(Collections.singletonList(topicName));
             
             // Wait for partition assignment
             System.out.println("Waiting for partition assignment...");
@@ -160,15 +182,16 @@ public class AvroConsumer {
     
     /**
      * Creates properties for Kafka Consumer with Avro deserializer and SASL_SSL authentication.
+     * Properties are loaded from the configuration file.
      */
     private static Properties createConsumerProperties() {
         Properties props = new Properties();
         
         // Bootstrap servers
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, config.getProperty("bootstrap.servers"));
         
         // Consumer group ID
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, "avro-consumer-group");
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, config.getProperty("consumer.group.id", "avro-consumer-group"));
         
         // Key deserializer (String)
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
@@ -177,38 +200,52 @@ public class AvroConsumer {
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, KafkaAvroDeserializer.class.getName());
         
         // Schema Registry URL
-        props.put(KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, AVRO_SCHEMA_REGISTRY_URL);
+        props.put("schema.registry.url", config.getProperty("schema.registry.url"));
         
         // Auto offset reset
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, 
+            config.getProperty("auto.offset.reset", "earliest"));
         
         // Session timeout
-        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 30000);
+        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 
+            config.getProperty("session.timeout.ms", "30000"));
         
         // Heartbeat interval
-        props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, 10000);
+        props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, 
+            config.getProperty("heartbeat.interval.ms", "10000"));
         
         // Request timeout
-        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
+        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, 
+            config.getProperty("request.timeout.ms", "30000"));
         
         // Metadata fetch timeout
-        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 300000);
+        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 
+            config.getProperty("max.poll.interval.ms", "300000"));
         
         // SSL/Trust Store configuration
-        if (TRUSTSTORE_PATH != null && !TRUSTSTORE_PATH.isEmpty()) {
+        String truststorePath = config.getProperty("ssl.truststore.path", "").trim();
+        if (!truststorePath.isEmpty()) {
             // Trust store location
-            props.put("ssl.truststore.location", TRUSTSTORE_PATH);
+            props.put("ssl.truststore.location", truststorePath);
             
             // Trust store password
-            if (TRUSTSTORE_PASSWORD != null && !TRUSTSTORE_PASSWORD.isEmpty()) {
-                props.put("ssl.truststore.password", TRUSTSTORE_PASSWORD);
+            String truststorePassword = config.getProperty("ssl.truststore.password", "").trim();
+            if (!truststorePassword.isEmpty()) {
+                props.put("ssl.truststore.password", truststorePassword);
             }
         }
         
         // SASL configuration
-        props.put("security.protocol", SECURITY_PROTOCOL);
-        props.put("sasl.mechanism", SASL_MECHANISM);
-        props.put("sasl.jaas.config", SASL_JAAS_CONFIG);
+        props.put("security.protocol", config.getProperty("security.protocol", "SASL_SSL"));
+        props.put("sasl.mechanism", config.getProperty("sasl.mechanism", "SCRAM-SHA-512"));
+        
+        // Build SASL JAAS config from username and password
+        String username = config.getProperty("sasl.username");
+        String password = config.getProperty("sasl.password");
+        String saslJaasConfig = String.format(
+            "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"%s\" password=\"%s\";",
+            username, password);
+        props.put("sasl.jaas.config", saslJaasConfig);
         
         return props;
     }
