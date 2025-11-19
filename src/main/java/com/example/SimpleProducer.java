@@ -1,30 +1,35 @@
 package com.example;
 
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.AuthorizationException;
 import org.apache.kafka.common.errors.TimeoutException;
-import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 
-import java.time.Duration;
-import java.util.Collections;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
+import java.util.Random;
+import java.util.concurrent.Future;
 
 /**
- * Simple consumer class to test connection to Redpanda cluster and consume messages.
+ * Simple producer class to test connection to Redpanda cluster and produce messages.
+ * Produces messages at random intervals (1s, 3s, 5s, 10s).
  * Handles all possible exceptions and prints detailed stack traces on failure.
  */
-public class SimpleConsumer {
-    // Maximum number of messages to consume (0 = unlimited, consume until interrupted)
-    private static final int MAX_MESSAGES = 0; // Set to 0 for unlimited, or a positive number to limit
+public class SimpleProducer {
     // Connection details
     private static final String BOOTSTRAP_SERVERS = "127.0.0.1:9092";
     private static final String DEFAULT_TOPIC = "quickstart";
-    private static final String DEFAULT_GROUP_ID = "simple-consumer-group";
+    
+    // Random interval options (in seconds)
+    private static final List<Integer> INTERVAL_OPTIONS = Arrays.asList(1, 3, 5, 10);
+    
+    private static final Random random = new Random();
     
     public static void main(String[] args) {
         // Get topic name from command line argument or use default
@@ -33,50 +38,75 @@ public class SimpleConsumer {
             : DEFAULT_TOPIC;
         
         System.out.println("==========================================");
-        System.out.println("Simple Consumer Connection Test");
+        System.out.println("Simple Producer Connection Test");
         System.out.println("==========================================");
         System.out.println("Bootstrap servers: " + BOOTSTRAP_SERVERS);
         System.out.println("Security protocol: PLAINTEXT (no authentication)");
         System.out.println("Topic: " + topicName);
-        System.out.println("Consumer group: " + DEFAULT_GROUP_ID);
+        System.out.println("Random intervals: " + INTERVAL_OPTIONS + " seconds");
         System.out.println("==========================================\n");
         
-        KafkaConsumer<String, String> consumer = null;
+        KafkaProducer<String, String> producer = null;
         
         try {
-            // Create consumer properties
-            Properties props = createConsumerProperties();
+            // Create producer properties
+            Properties props = createProducerProperties();
             
-            System.out.println("Creating KafkaConsumer instance...");
-            consumer = new KafkaConsumer<>(props);
+            System.out.println("Creating KafkaProducer instance...");
+            producer = new KafkaProducer<>(props);
             
-            System.out.println("Subscribing to topic: " + topicName);
-            consumer.subscribe(Collections.singletonList(topicName));
-            
-            System.out.println("Attempting to connect to cluster and fetch metadata...");
+            System.out.println("Attempting to connect to cluster...");
             System.out.println("(This may take a few seconds to establish connection)...\n");
             
-            // Attempt to poll to establish connection and verify we can communicate with the cluster
-            // This will trigger connection, authentication, and metadata fetch
-            consumer.poll(Duration.ofSeconds(5));
+            // Test connection by sending a test message (synchronous to verify connection)
+            // Note: The topic must exist before sending messages
+            System.out.println("Testing connection by sending a test message...");
+            System.out.println("Note: Topic '" + topicName + "' must exist in the cluster.");
+            System.out.println("If the topic doesn't exist, create it first or use an existing topic.\n");
             
-            // If we get here, the connection was successful
-            System.out.println("==========================================");
-            System.out.println("SUCCESS: Consumer connection established!");
-            System.out.println("==========================================");
-            System.out.println("Consumer successfully connected to Redpanda cluster.");
-            System.out.println("Consumer is subscribed to topic: " + topicName);
-            System.out.println("Connection test completed successfully.\n");
+            ProducerRecord<String, String> testRecord = new ProducerRecord<>(topicName, "test-key", "Connection test message");
+            Future<RecordMetadata> future = producer.send(testRecord);
             
-            // Start consuming messages
-            System.out.println("==========================================");
-            System.out.println("Starting message consumption...");
-            System.out.println("==========================================");
-            if (MAX_MESSAGES > 0) {
-                System.out.println("Will consume up to " + MAX_MESSAGES + " messages.");
-            } else {
-                System.out.println("Consuming messages continuously (press Ctrl+C to stop).");
+            try {
+                RecordMetadata metadata = future.get(); // Wait for send to complete
+                
+                // If we get here, the connection was successful
+                System.out.println("==========================================");
+                System.out.println("SUCCESS: Producer connection established!");
+                System.out.println("==========================================");
+                System.out.println("Producer successfully connected to Redpanda cluster.");
+                System.out.println("Test message sent to topic: " + topicName);
+                System.out.println("Test message partition: " + metadata.partition());
+                System.out.println("Test message offset: " + metadata.offset());
+                System.out.println("Connection test completed successfully.\n");
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof org.apache.kafka.common.errors.TimeoutException) {
+                    System.out.println("==========================================");
+                    System.out.println("ERROR: Topic not found or connection timeout");
+                    System.out.println("==========================================");
+                    System.out.println("Error: Topic '" + topicName + "' not present in metadata after timeout.");
+                    System.out.println("\nPossible causes:");
+                    System.out.println("  1. Topic '" + topicName + "' does not exist in the cluster");
+                    System.out.println("  2. Cannot connect to cluster (network issues)");
+                    System.out.println("  3. Topic metadata fetch timed out");
+                    System.out.println("\nSolutions:");
+                    System.out.println("  - Create the topic first using:");
+                    System.out.println("    rpk topic create " + topicName);
+                    System.out.println("  - Or use an existing topic name");
+                    System.out.println("  - Or check if the cluster is accessible");
+                    System.out.println("==========================================");
+                    throw new RuntimeException("Topic '" + topicName + "' not found. Please create it first.", cause);
+                } else {
+                    throw e;
+                }
             }
+            
+            // Start producing messages at random intervals
+            System.out.println("==========================================");
+            System.out.println("Starting message production...");
+            System.out.println("==========================================");
+            System.out.println("Producing messages at random intervals (press Ctrl+C to stop).");
             System.out.println("==========================================\n");
             
             int messageCount = 0;
@@ -84,45 +114,47 @@ public class SimpleConsumer {
             
             while (shouldContinue) {
                 try {
-                    // Poll for messages
-                    ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(5));
+                    // Select random interval from options
+                    int intervalSeconds = INTERVAL_OPTIONS.get(random.nextInt(INTERVAL_OPTIONS.size()));
                     
-                    if (records.isEmpty()) {
-                        System.out.println("No messages received in this poll. Waiting...");
-                        continue;
-                    }
+                    // Create message
+                    messageCount++;
+                    String messageKey = "key-" + messageCount;
+                    String messageValue = "Message #" + messageCount + " at " + System.currentTimeMillis();
                     
-                    // Process each record
-                    for (ConsumerRecord<String, String> record : records) {
-                        messageCount++;
-                        
-                        System.out.println("----------------------------------------");
-                        System.out.println("Message #" + messageCount);
-                        System.out.println("Topic: " + record.topic());
-                        System.out.println("Partition: " + record.partition());
-                        System.out.println("Offset: " + record.offset());
-                        System.out.println("Key: " + (record.key() != null ? record.key() : "null"));
-                        System.out.println("Value: " + (record.value() != null ? record.value() : "null"));
-                        System.out.println("Timestamp: " + record.timestamp());
-                        System.out.println("Timestamp Type: " + record.timestampType());
-                        System.out.println("Headers: " + (record.headers() != null && record.headers().iterator().hasNext() 
-                            ? record.headers().toString() : "none"));
-                        System.out.println("----------------------------------------\n");
-                        
-                        // Check if we've reached the maximum number of messages
-                        if (MAX_MESSAGES > 0 && messageCount >= MAX_MESSAGES) {
-                            System.out.println("Reached maximum message count (" + MAX_MESSAGES + "). Stopping consumption.");
-                            shouldContinue = false;
-                            break;
+                    ProducerRecord<String, String> record = new ProducerRecord<>(topicName, messageKey, messageValue);
+                    
+                    // Send message asynchronously
+                    producer.send(record, (recordMetadata, exception) -> {
+                        if (exception != null) {
+                            System.err.println("Error sending message: " + exception.getMessage());
+                            exception.printStackTrace();
+                        } else {
+                            System.out.println("----------------------------------------");
+                            System.out.println("Message sent successfully");
+                            System.out.println("Topic: " + recordMetadata.topic());
+                            System.out.println("Partition: " + recordMetadata.partition());
+                            System.out.println("Offset: " + recordMetadata.offset());
+                            System.out.println("Timestamp: " + recordMetadata.timestamp());
+                            System.out.println("Key: " + messageKey);
+                            System.out.println("Value: " + messageValue);
+                            System.out.println("----------------------------------------\n");
                         }
-                    }
+                    });
                     
+                    // Wait for the random interval before sending next message
+                    System.out.println("Waiting " + intervalSeconds + " second(s) before next message...");
+                    Thread.sleep(intervalSeconds * 1000L);
+                    
+                } catch (InterruptedException e) {
+                    System.out.println("Interrupted. Stopping message production.");
+                    shouldContinue = false;
+                    Thread.currentThread().interrupt();
                 } catch (Exception e) {
-                    System.out.println("Error while consuming messages: " + e.getMessage());
+                    System.out.println("Error while producing message: " + e.getMessage());
                     e.printStackTrace();
-                    // Continue consuming despite errors, unless it's a critical error
+                    // Continue producing despite errors, unless it's a critical error
                     if (e instanceof InterruptedException) {
-                        System.out.println("Interrupted. Stopping consumption.");
                         shouldContinue = false;
                         Thread.currentThread().interrupt();
                     }
@@ -130,8 +162,8 @@ public class SimpleConsumer {
             }
             
             System.out.println("==========================================");
-            System.out.println("Message consumption completed.");
-            System.out.println("Total messages consumed: " + messageCount);
+            System.out.println("Message production completed.");
+            System.out.println("Total messages sent: " + messageCount);
             System.out.println("==========================================");
             
         } catch (AuthenticationException e) {
@@ -157,8 +189,7 @@ public class SimpleConsumer {
             System.out.println("==========================================");
             System.out.println("Error: User is authenticated but lacks required permissions.");
             System.out.println("Possible causes:");
-            System.out.println("  - User does not have READ permission for the topic");
-            System.out.println("  - User does not have permission to join consumer group");
+            System.out.println("  - User does not have WRITE permission for the topic");
             System.out.println("  - Topic access is restricted");
             System.out.println("\nException Details:");
             System.out.println("Exception Type: " + e.getClass().getName());
@@ -222,10 +253,10 @@ public class SimpleConsumer {
             System.out.println("==========================================");
             System.out.println("FAILED: Illegal State Exception");
             System.out.println("==========================================");
-            System.out.println("Error: Consumer is in an invalid state.");
+            System.out.println("Error: Producer is in an invalid state.");
             System.out.println("Possible causes:");
-            System.out.println("  - Consumer was closed");
-            System.out.println("  - Consumer not properly initialized");
+            System.out.println("  - Producer was closed");
+            System.out.println("  - Producer not properly initialized");
             System.out.println("  - Concurrent access violation");
             System.out.println("\nException Details:");
             System.out.println("Exception Type: " + e.getClass().getName());
@@ -251,13 +282,13 @@ public class SimpleConsumer {
             System.exit(1);
             
         } finally {
-            if (consumer != null) {
+            if (producer != null) {
                 try {
-                    System.out.println("\nClosing consumer...");
-                    consumer.close();
-                    System.out.println("Consumer closed successfully.");
+                    System.out.println("\nClosing producer...");
+                    producer.close();
+                    System.out.println("Producer closed successfully.");
                 } catch (Exception e) {
-                    System.out.println("Warning: Error while closing consumer:");
+                    System.out.println("Warning: Error while closing producer:");
                     e.printStackTrace();
                 }
             }
@@ -265,35 +296,38 @@ public class SimpleConsumer {
     }
     
     /**
-     * Creates properties for Kafka Consumer (no authentication - PLAINTEXT).
+     * Creates properties for Kafka Producer (no authentication - PLAINTEXT).
      */
-    private static Properties createConsumerProperties() {
+    private static Properties createProducerProperties() {
         Properties props = new Properties();
         
         // Bootstrap servers
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
         
-        // Consumer group ID
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, DEFAULT_GROUP_ID);
+        // Serializers
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         
-        // Deserializers
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        // Acknowledgment - wait for all replicas
+        props.put(ProducerConfig.ACKS_CONFIG, "all");
         
-        // Auto offset reset - start from earliest if no offset exists
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        // Retries
+        props.put(ProducerConfig.RETRIES_CONFIG, 3);
         
-        // Session timeout
-        props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 30000);
+        // Batch size
+        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384);
         
-        // Heartbeat interval
-        props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, 10000);
+        // Linger time
+        props.put(ProducerConfig.LINGER_MS_CONFIG, 1);
+        
+        // Buffer memory
+        props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432);
         
         // Request timeout
-        props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
+        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
         
-        // Metadata fetch timeout
-        props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 300000);
+        // Metadata fetch timeout - how long to wait for topic metadata
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 60000); // 60 seconds
         
         // No authentication - using PLAINTEXT
         // Security protocol is PLAINTEXT (no SSL, no SASL)

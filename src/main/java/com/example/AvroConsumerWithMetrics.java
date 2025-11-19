@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  * Configuration is loaded from consumer.properties file.
  * Exposes Prometheus metrics on /metrics endpoint.
  */
-public class AvroConsumer {
+public class AvroConsumerWithMetrics {
     private static Properties config;
     
     // Prometheus Metrics
@@ -61,7 +61,7 @@ public class AvroConsumer {
     private static Properties loadConfiguration() {
         Properties props = new Properties();
         try {
-            InputStream inputStream = AvroConsumer.class.getClassLoader()
+            InputStream inputStream = AvroConsumerWithMetrics.class.getClassLoader()
                 .getResourceAsStream("consumer.properties");
             
             if (inputStream == null) {

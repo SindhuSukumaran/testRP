@@ -41,6 +41,20 @@
             <artifactId>kafka-schema-serializer</artifactId>
             <version>8.1.0</version>
         </dependency>
+        
+        <!-- Prometheus Metrics -->
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>simpleclient</artifactId>
+            <version>0.16.0</version>
+        </dependency>
+        
+        <!-- Prometheus HTTP Server for exposing metrics -->
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>simpleclient_httpserver</artifactId>
+            <version>0.16.0</version>
+        </dependency>
     </dependencies>
 
     <repositories>
