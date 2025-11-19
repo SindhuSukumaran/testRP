@@ -82,13 +82,13 @@ public class AvroConsumer {
         // Load configuration from properties file
         config = loadConfiguration();
         
-        // Get number of messages to consume from command line argument
-        int numMessages = 10; // default
+        // Get number of messages to consume from command line argument (optional)
+        int numMessages = Integer.MAX_VALUE; // default: consume all messages
         if (args.length > 0) {
             try {
                 numMessages = Integer.parseInt(args[0]);
             } catch (NumberFormatException e) {
-                System.err.println("Invalid number of messages: " + args[0] + ". Using default: 10");
+                System.err.println("Invalid number of messages: " + args[0] + ". Will consume all messages from offset 0");
             }
         }
         
@@ -107,7 +107,7 @@ public class AvroConsumer {
         System.out.println("Schema Registry URL: " + schemaRegistryUrl);
         System.out.println("Security protocol: " + securityProtocol);
         System.out.println("SASL mechanism: " + saslMechanism);
-        System.out.println("Number of messages to consume: " + numMessages);
+        System.out.println("Number of messages to consume: " + (numMessages == Integer.MAX_VALUE ? "all (from offset 0)" : numMessages));
         System.out.println("==========================================\n");
         
         // Start Prometheus metrics HTTP server
@@ -180,21 +180,14 @@ public class AvroConsumer {
             
             System.out.println("Successfully assigned partitions: " + partitions);
             
-            // Seek to end to get the latest offsets
-            System.out.println("Seeking to end of partitions...");
-            consumer.seekToEnd(partitions);
-            
-            // Get end offsets and seek to position for last N messages
-            System.out.println("Calculating positions for last " + numMessages + " messages...");
+            // Seek to offset 0 for all partitions
+            System.out.println("Seeking to offset 0 for all partitions...");
             for (TopicPartition partition : partitions) {
-                long endOffset = consumer.position(partition);
-                long startOffset = Math.max(0, endOffset - numMessages);
-                System.out.println("Partition " + partition.partition() + 
-                    ": end offset=" + endOffset + ", seeking to offset=" + startOffset);
-                consumer.seek(partition, startOffset);
+                consumer.seek(partition, 0);
+                System.out.println("Partition " + partition.partition() + ": seeking to offset 0");
             }
             
-            System.out.println("\nConsuming messages...\n");
+            System.out.println("\nConsuming messages from offset 0...\n");
             
             // Consume messages
             int messageCount = 0;
