@@ -82,14 +82,15 @@ public class AvroConsumer {
         // Load configuration from properties file
         config = loadConfiguration();
         
-        // Get number of messages to consume from command line argument (optional)
-        int numMessages = Integer.MAX_VALUE; // default: consume all messages
-        if (args.length > 0) {
-            try {
-                numMessages = Integer.parseInt(args[0]);
-            } catch (NumberFormatException e) {
-                System.err.println("Invalid number of messages: " + args[0] + ". Will consume all messages from offset 0");
-            }
+        // Get consumption mode from properties
+        String consumeMode = config.getProperty("consume.mode", "all").toLowerCase().trim();
+        int consumeLastCount = Integer.parseInt(config.getProperty("consume.last.count", "10"));
+        
+        // Validate consume mode
+        if (!consumeMode.equals("all") && !consumeMode.equals("last") && !consumeMode.equals("latest")) {
+            System.err.println("Invalid consume.mode: " + consumeMode + ". Valid options: all, last, latest");
+            System.err.println("Defaulting to 'all'");
+            consumeMode = "all";
         }
         
         // Get configuration values
@@ -107,7 +108,10 @@ public class AvroConsumer {
         System.out.println("Schema Registry URL: " + schemaRegistryUrl);
         System.out.println("Security protocol: " + securityProtocol);
         System.out.println("SASL mechanism: " + saslMechanism);
-        System.out.println("Number of messages to consume: " + (numMessages == Integer.MAX_VALUE ? "all (from offset 0)" : numMessages));
+        System.out.println("Consume mode: " + consumeMode);
+        if (consumeMode.equals("last")) {
+            System.out.println("Consume last count: " + consumeLastCount);
+        }
         System.out.println("==========================================\n");
         
         // Start Prometheus metrics HTTP server
@@ -180,25 +184,58 @@ public class AvroConsumer {
             
             System.out.println("Successfully assigned partitions: " + partitions);
             
-            // Seek to offset 0 for all partitions
-            System.out.println("Seeking to offset 0 for all partitions...");
-            for (TopicPartition partition : partitions) {
-                consumer.seek(partition, 0);
-                System.out.println("Partition " + partition.partition() + ": seeking to offset 0");
-            }
+            // Configure consumption based on mode
+            int numMessages = Integer.MAX_VALUE; // For "all" and "latest" modes
+            boolean continuousMode = false;
             
-            System.out.println("\nConsuming messages from offset 0...\n");
+            if (consumeMode.equals("all")) {
+                // Seek to offset 0 for all partitions
+                System.out.println("Seeking to offset 0 for all partitions...");
+                for (TopicPartition partition : partitions) {
+                    consumer.seek(partition, 0);
+                    System.out.println("Partition " + partition.partition() + ": seeking to offset 0");
+                }
+                System.out.println("\nConsuming all messages from offset 0...\n");
+            } else if (consumeMode.equals("last")) {
+                // Seek to end to get the latest offsets
+                System.out.println("Seeking to end of partitions...");
+                consumer.seekToEnd(partitions);
+                
+                // Get end offsets and seek to position for last N messages
+                System.out.println("Calculating positions for last " + consumeLastCount + " messages...");
+                for (TopicPartition partition : partitions) {
+                    long endOffset = consumer.position(partition);
+                    long startOffset = Math.max(0, endOffset - consumeLastCount);
+                    System.out.println("Partition " + partition.partition() + 
+                        ": end offset=" + endOffset + ", seeking to offset=" + startOffset);
+                    consumer.seek(partition, startOffset);
+                }
+                numMessages = consumeLastCount;
+                System.out.println("\nConsuming last " + consumeLastCount + " messages...\n");
+            } else if (consumeMode.equals("latest")) {
+                // Seek to end to consume only new messages
+                System.out.println("Seeking to end of partitions (latest messages only)...");
+                consumer.seekToEnd(partitions);
+                continuousMode = true;
+                System.out.println("\nConsuming only latest/newest messages (continuous mode)...\n");
+                System.out.println("Press Ctrl+C to stop.\n");
+            }
             
             // Consume messages
             int messageCount = 0;
-            long endTime = System.currentTimeMillis() + 30000; // 30 second timeout
+            long endTime = System.currentTimeMillis() + (continuousMode ? Long.MAX_VALUE : 30000); // No timeout for latest mode
             
-            while (messageCount < numMessages && System.currentTimeMillis() < endTime) {
+            while ((continuousMode || messageCount < numMessages) && System.currentTimeMillis() < endTime) {
                 ConsumerRecords<String, Object> records = consumer.poll(Duration.ofSeconds(5));
                 
                 if (records.isEmpty()) {
-                    System.out.println("No more messages available.");
-                    break;
+                    if (continuousMode) {
+                        // In continuous mode, empty records just means no new messages yet
+                        continue;
+                    } else {
+                        System.out.println("No more messages available.");
+                        break;
+                    }
                 }
                 
                 for (ConsumerRecord<String, Object> record : records) {
