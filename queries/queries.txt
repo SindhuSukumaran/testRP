@@ -1,0 +1,70 @@
+Prometheus Queries by Dimension
+1. Query by Date:
+# All tests executed on a specific date
+api_test_executions_total{execution_date="2025-11-19"}
+# Success rate by date
+sum(api_test_success_total{execution_date="2025-11-19"}) / sum(api_test_executions_total{execution_date="2025-11-19"}) * 100
+
+2. Query by Test Case ID:
+# Specific test case execution
+api_test_executions_total{test_case_id="42"}
+# Latency for specific test case
+api_test_latency_seconds{test_case_id="42"}
+# All metrics for test case 42
+{__name__=~"api_test_.*", test_case_id="42"}
+
+3. Query by Error Code:
+# All tests with 404 error
+api_test_executions_total{status_code="404"}
+# All tests with 500 error
+api_test_executions_total{status_code="500"}
+# Failure count by error code
+sum by (status_code) (api_test_failure_total)
+# Latency for failed tests (non-200)
+api_test_latency_seconds{status_code!="200"}
+
+4. Query by Latency:
+# Average latency across all tests
+avg(api_test_latency_seconds)
+# 95th percentile latency
+histogram_quantile(0.95, rate(api_test_latency_seconds_bucket[5m]))
+# Tests with latency > 2 seconds
+api_test_latency_seconds > 2
+# Latency by API
+sum by (api_name) (rate(api_test_latency_seconds_sum[5m])) / sum by (api_name) (rate(api_test_latency_seconds_count[5m]))
+
+5. Combined Queries:
+# Success rate by API
+sum by (api_name) (api_test_success_total) / sum by (api_name) (api_test_executions_total) * 100
+# Failure rate by error code
+sum by (status_code) (api_test_failure_total) / sum(api_test_executions_total) * 100
+# Average latency by API and date
+avg by (api_name, execution_date) (api_test_latency_seconds)
+# Test execution timeline (by test case ID)
+api_test_executions_total{success="true"} vs api_test_executions_total{success="false"}
+
+How to Run
+Start Prometheus and Grafana:
+cd /Users/sindhusukumaran/testRP/monitoringdocker-compose up -d
+
+Run the API Test Runner:
+cd /Users/sindhusukumaran/testRPmvn exec:java -Dexec.mainClass="com.example.ApiTestRunner"
+
+The program will:
+Run all 100 test cases sequentially
+Print progress every 10 tests
+Show final summary
+Keep metrics server running for Prometheus to scrape
+
+Example Grafana Queries
+For Grafana dashboards, you can use:
+Success Rate Over Time:
+100
+sum(rate(api_test_success_total[5m])) / sum(rate(api_test_executions_total[5m])) * 100
+
+Latency by API:
+histogram_quantile(0.95, sum by (api_name, le) (rate(api_test_latency_seconds_bucket[5m])))
+
+Error Distribution:
+sum by (status_code) (api_test_failure_total)
+The code compiles successfully and is ready to use. All metrics are labeled with the dimensions you requested for flexible querying.
