@@ -184,6 +184,11 @@ public class AvroConsumer {
             
             System.out.println("Successfully assigned partitions: " + partitions);
             
+            // Important: After partition assignment, we need to wait for the initial position
+            // to be set by the consumer group coordinator, then we can override it with seek()
+            // Poll once to ensure partition assignment is complete
+            consumer.poll(Duration.ofMillis(100));
+            
             // Configure consumption based on mode
             int numMessages = Integer.MAX_VALUE; // For "all" and "latest" modes
             boolean continuousMode = false;
@@ -367,6 +372,12 @@ public class AvroConsumer {
         // Metadata fetch timeout
         props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 
             config.getProperty("max.poll.interval.ms", "300000"));
+        
+        // Offset commit configuration
+        // Disable auto-commit to prevent offset commits when manually seeking
+        // This ensures each run starts from the seek position, not from last committed offset
+        String enableAutoCommit = config.getProperty("enable.auto.commit", "false");
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, Boolean.parseBoolean(enableAutoCommit));
         
         // SSL/Trust Store configuration
         String truststorePath = config.getProperty("ssl.truststore.path", "").trim();
