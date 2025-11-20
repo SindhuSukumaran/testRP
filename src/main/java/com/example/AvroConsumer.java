@@ -187,6 +187,7 @@ public class AvroConsumer {
             // Configure consumption based on mode
             int numMessages = Integer.MAX_VALUE; // For "all" and "latest" modes
             boolean continuousMode = false;
+            boolean lastModeInitialConsumption = false; // Track if we've consumed initial last N messages
             
             if (consumeMode.equals("all")) {
                 // Seek to offset 0 for all partitions
@@ -211,7 +212,9 @@ public class AvroConsumer {
                     consumer.seek(partition, startOffset);
                 }
                 numMessages = consumeLastCount;
-                System.out.println("\nConsuming last " + consumeLastCount + " messages...\n");
+                lastModeInitialConsumption = true; // Mark that we need to consume initial last N messages
+                System.out.println("\nConsuming last " + consumeLastCount + " messages, then continuing for new messages...\n");
+                System.out.println("Press Ctrl+C to stop.\n");
             } else if (consumeMode.equals("latest")) {
                 // Seek to end to consume only new messages
                 System.out.println("Seeking to end of partitions (latest messages only)...");
@@ -223,14 +226,14 @@ public class AvroConsumer {
             
             // Consume messages
             int messageCount = 0;
-            long endTime = System.currentTimeMillis() + (continuousMode ? Long.MAX_VALUE : 30000); // No timeout for latest mode
+            long endTime = System.currentTimeMillis() + (continuousMode || lastModeInitialConsumption ? Long.MAX_VALUE : 30000); // No timeout for latest/last mode
             
-            while ((continuousMode || messageCount < numMessages) && System.currentTimeMillis() < endTime) {
+            while ((continuousMode || lastModeInitialConsumption || messageCount < numMessages) && System.currentTimeMillis() < endTime) {
                 ConsumerRecords<String, Object> records = consumer.poll(Duration.ofSeconds(5));
                 
                 if (records.isEmpty()) {
-                    if (continuousMode) {
-                        // In continuous mode, empty records just means no new messages yet
+                    if (continuousMode || (lastModeInitialConsumption && messageCount >= numMessages)) {
+                        // In continuous mode or after consuming initial last N messages, empty records just means no new messages yet
                         continue;
                     } else {
                         System.out.println("No more messages available.");
@@ -239,7 +242,17 @@ public class AvroConsumer {
                 }
                 
                 for (ConsumerRecord<String, Object> record : records) {
-                    if (messageCount >= numMessages) {
+                    // For "last" mode, after consuming initial last N messages, switch to continuous mode
+                    if (lastModeInitialConsumption && messageCount >= numMessages) {
+                        System.out.println("\n==========================================");
+                        System.out.println("Successfully consumed last " + consumeLastCount + " message(s)");
+                        System.out.println("Now continuing to consume new messages...");
+                        System.out.println("==========================================\n");
+                        lastModeInitialConsumption = false;
+                        continuousMode = true;
+                    }
+                    
+                    if (!continuousMode && messageCount >= numMessages) {
                         break;
                     }
                     
@@ -277,9 +290,12 @@ public class AvroConsumer {
                 }
             }
             
-            System.out.println("==========================================");
-            System.out.println("Successfully consumed " + messageCount + " message(s)");
-            System.out.println("==========================================");
+            // Only print completion message if not in continuous mode
+            if (!continuousMode && !lastModeInitialConsumption) {
+                System.out.println("==========================================");
+                System.out.println("Successfully consumed " + messageCount + " message(s)");
+                System.out.println("==========================================");
+            }
             
         } catch (Exception e) {
             System.out.println("==========================================");
@@ -303,16 +319,10 @@ public class AvroConsumer {
                 }
             }
             
-            // Stop metrics server
-            if (metricsServer != null) {
-                try {
-                    System.out.println("Stopping metrics server...");
-                    metricsServer.stop();
-                    System.out.println("Metrics server stopped.");
-                } catch (Exception e) {
-                    System.err.println("Warning: Error stopping metrics server: " + e.getMessage());
-                }
-            }
+            // Note: Metrics server is kept running for continuous modes
+            // It will only stop when the JVM exits
+            // For continuous modes (latest, or last after initial consumption), 
+            // the metrics server should remain up
         }
     }
     
