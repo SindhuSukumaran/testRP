@@ -5,6 +5,7 @@ import io.prometheus.client.Counter;
 import io.prometheus.client.Gauge;
 import io.prometheus.client.Histogram;
 import io.prometheus.client.exporter.HTTPServer;
+import org.apache.avro.generic.GenericRecord;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -16,8 +17,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -53,7 +56,29 @@ public class AvroConsumer {
         .labelNames("error_type")
         .register();
     
+    // EventType metrics
+    private static final Counter eventTypeCount = Counter.build()
+        .name("kafka_consumer_eventtype_total")
+        .help("Total count of messages by EVENTTYPE_ value")
+        .labelNames("topic", "partition", "eventtype")
+        .register();
+    
+    private static final Gauge eventTypeByTimestamp = Gauge.build()
+        .name("kafka_consumer_eventtype_by_timestamp")
+        .help("Kafka timestamp mapped to EVENTTYPE_ value")
+        .labelNames("topic", "partition", "eventtype", "kafka_timestamp")
+        .register();
+    
+    private static final Gauge uniqueEventTypeCount = Gauge.build()
+        .name("kafka_consumer_unique_eventtype_count")
+        .help("Number of unique EVENTTYPE_ values seen")
+        .labelNames("topic")
+        .register();
+    
     private static HTTPServer metricsServer;
+    
+    // Track unique EVENTTYPE_ values per topic
+    private static final Set<String> uniqueEventTypes = new HashSet<>();
     
     /**
      * Loads configuration from consumer.properties file.
@@ -235,6 +260,28 @@ public class AvroConsumer {
                         System.out.println("Value (Avro): " + record.value());
                         System.out.println("Value Type: " + 
                             (record.value() != null ? record.value().getClass().getName() : "null"));
+                        
+                        // Extract EVENTTYPE_ from Avro value
+                        String eventType = extractEventType(record.value());
+                        if (eventType != null) {
+                            System.out.println("EVENTTYPE_: " + eventType);
+                            
+                            // Track unique EVENTTYPE_ values
+                            synchronized (uniqueEventTypes) {
+                                uniqueEventTypes.add(eventType);
+                                uniqueEventTypeCount.labels(topicName).set(uniqueEventTypes.size());
+                            }
+                            
+                            // Count messages by EVENTTYPE_
+                            eventTypeCount.labels(topicName, String.valueOf(record.partition()), eventType).inc();
+                            
+                            // Map Kafka timestamp to EVENTTYPE_
+                            eventTypeByTimestamp.labels(topicName, String.valueOf(record.partition()), 
+                                eventType, String.valueOf(record.timestamp())).set(1.0);
+                        } else {
+                            System.out.println("EVENTTYPE_: not found or null");
+                        }
+                        
                         System.out.println("----------------------------------------\n");
                         
                         // Update Prometheus metrics
@@ -281,6 +328,31 @@ public class AvroConsumer {
             // For continuous modes (latest, or last after initial consumption), 
             // the metrics server should remain up
         }
+    }
+    
+    /**
+     * Extracts EVENTTYPE_ field from Avro GenericRecord.
+     * @param value The Avro value (should be a GenericRecord)
+     * @return The EVENTTYPE_ value as String, or null if not found
+     */
+    private static String extractEventType(Object value) {
+        if (value == null) {
+            return null;
+        }
+        
+        try {
+            if (value instanceof GenericRecord) {
+                GenericRecord record = (GenericRecord) value;
+                Object eventTypeObj = record.get("EVENTTYPE_");
+                if (eventTypeObj != null) {
+                    return eventTypeObj.toString();
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error extracting EVENTTYPE_: " + e.getMessage());
+        }
+        
+        return null;
     }
     
     /**
