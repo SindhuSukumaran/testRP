@@ -17,6 +17,7 @@ import java.io.InputStream;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Collectors;
 
@@ -203,22 +204,31 @@ public class AvroConsumer {
                 }
                 System.out.println("\nConsuming all messages from offset 0...\n");
             } else if (consumeMode.equals("last")) {
-                // Seek to end to get the latest offsets
-                System.out.println("Seeking to end of partitions...");
-                consumer.seekToEnd(partitions);
+                // Get end offsets for all partitions
+                System.out.println("Getting end offsets for partitions...");
+                Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
                 
-                // Get end offsets and seek to position for last N messages
-                System.out.println("Calculating positions for last " + consumeLastCount + " messages...");
+                // Calculate positions for last N messages per partition and seek
+                System.out.println("Calculating positions for last " + consumeLastCount + " messages per partition...");
+                long totalMessagesToConsume = 0;
                 for (TopicPartition partition : partitions) {
-                    long endOffset = consumer.position(partition);
+                    long endOffset = endOffsets.get(partition);
                     long startOffset = Math.max(0, endOffset - consumeLastCount);
+                    long messagesInPartition = endOffset - startOffset;
+                    totalMessagesToConsume += messagesInPartition;
                     System.out.println("Partition " + partition.partition() + 
-                        ": end offset=" + endOffset + ", seeking to offset=" + startOffset);
+                        ": end offset=" + endOffset + ", seeking to offset=" + startOffset + 
+                        ", messages in partition=" + messagesInPartition);
                     consumer.seek(partition, startOffset);
                 }
-                numMessages = consumeLastCount;
+                
+                // Set numMessages to total available across all partitions
+                // This will consume up to (consumeLastCount * numPartitions) messages total
+                numMessages = (int) totalMessagesToConsume;
                 lastModeInitialConsumption = true; // Mark that we need to consume initial last N messages
-                System.out.println("\nConsuming last " + consumeLastCount + " messages, then continuing for new messages...\n");
+                System.out.println("\nTotal messages to consume across all partitions: " + totalMessagesToConsume);
+                System.out.println("(Last " + consumeLastCount + " messages per partition)");
+                System.out.println("After consuming these messages, will continue for new messages...\n");
                 System.out.println("Press Ctrl+C to stop.\n");
             } else if (consumeMode.equals("latest")) {
                 // Seek to end to consume only new messages
@@ -234,12 +244,28 @@ public class AvroConsumer {
             long endTime = System.currentTimeMillis() + (continuousMode || lastModeInitialConsumption ? Long.MAX_VALUE : 30000); // No timeout for latest/last mode
             
             while ((continuousMode || lastModeInitialConsumption || messageCount < numMessages) && System.currentTimeMillis() < endTime) {
+                // Check if we need to switch to continuous mode for "last" mode
+                // This check happens before polling to ensure we switch even if no new records arrive
+                if (lastModeInitialConsumption && messageCount >= numMessages) {
+                    System.out.println("\n==========================================");
+                    System.out.println("Successfully consumed last " + consumeLastCount + " message(s)");
+                    System.out.println("Now continuing to consume new messages...");
+                    System.out.println("Waiting for new messages...");
+                    System.out.println("==========================================\n");
+                    lastModeInitialConsumption = false;
+                    continuousMode = true;
+                }
+                
                 ConsumerRecords<String, Object> records = consumer.poll(Duration.ofSeconds(5));
                 
                 if (records.isEmpty()) {
-                    if (continuousMode || (lastModeInitialConsumption && messageCount >= numMessages)) {
-                        // In continuous mode or after consuming initial last N messages, empty records just means no new messages yet
+                    if (continuousMode) {
+                        // In continuous mode, empty records just means no new messages yet
                         continue;
+                    } else if (lastModeInitialConsumption && messageCount < numMessages) {
+                        // Still waiting for initial messages
+                        System.out.println("No more messages available in initial batch.");
+                        break;
                     } else {
                         System.out.println("No more messages available.");
                         break;
@@ -247,16 +273,6 @@ public class AvroConsumer {
                 }
                 
                 for (ConsumerRecord<String, Object> record : records) {
-                    // For "last" mode, after consuming initial last N messages, switch to continuous mode
-                    if (lastModeInitialConsumption && messageCount >= numMessages) {
-                        System.out.println("\n==========================================");
-                        System.out.println("Successfully consumed last " + consumeLastCount + " message(s)");
-                        System.out.println("Now continuing to consume new messages...");
-                        System.out.println("==========================================\n");
-                        lastModeInitialConsumption = false;
-                        continuousMode = true;
-                    }
-                    
                     if (!continuousMode && messageCount >= numMessages) {
                         break;
                     }
